@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 BLE LED + Temperature</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 420px;
+      margin: 40px auto;
+      padding: 20px;
+      text-align: center;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; }
+    .card {
+      background: #1e293b;
+      border-radius: 16px;
+      padding: 24px;
+      margin: 16px 0;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin: 8px;
+      transition: background 0.2s;
+    }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #64748b; cursor: not-allowed; }
+    .led-on { background: #22c55e !important; }
+    .temp {
+      font-size: 2.8rem;
+      font-weight: 700;
+      margin: 12px 0;
+      color: #38bdf8;
+    }
+    .status { font-size: 0.9rem; color: #94a3b8; margin-top: 12px; }
+    .connected { color: #4ade80; }
+  </style>
+</head>
+<body>
+  <h1>ESP32 BLE Control</h1>
+  <p>LED + DS18B20 Temperature</p>
+
+  <div class="card">
+    <button id="connectBtn">Connect to ESP32</button>
+    <div id="status" class="status">Not connected</div>
+  </div>
+
+  <div class="card">
+    <h2>LED</h2>
+    <button id="ledOnBtn" disabled>Turn LED ON</button>
+    <button id="ledOffBtn" disabled>Turn LED OFF</button>
+  </div>
+
+  <div class="card">
+    <h2>Temperature</h2>
+    <div id="tempValue" class="temp">--.- °C</div>
+    <div class="status">Updates every 5 seconds</div>
+  </div>
+
+  <script>
+    // Change these UUIDs to match your ESP32 code
+    const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+    const LED_CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+    const TEMP_CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
+
+    let device, server, ledChar, tempChar;
+
+    const connectBtn = document.getElementById("connectBtn");
+    const ledOnBtn = document.getElementById("ledOnBtn");
+    const ledOffBtn = document.getElementById("ledOffBtn");
+    const statusEl = document.getElementById("status");
+    const tempValue = document.getElementById("tempValue");
+
+    connectBtn.addEventListener("click", async () => {
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "ESP32" }],   // or use services: [SERVICE_UUID]
+          optionalServices: [SERVICE_UUID]
+        });
+
+        statusEl.textContent = "Connecting...";
+        server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+
+        ledChar = await service.getCharacteristic(LED_CHAR_UUID);
+        tempChar = await service.getCharacteristic(TEMP_CHAR_UUID);
+
+        // Start notifications for temperature
+        await tempChar.startNotifications();
+        tempChar.addEventListener("characteristicvaluechanged", (event) => {
+          const value = event.target.value;
+          // Assuming the ESP32 sends a float as 4 bytes (little-endian)
+          const temp = value.getFloat32(0, true);
+          tempValue.textContent = temp.toFixed(1) + " °C";
+        });
+
+        // Also read once
+        const initial = await tempChar.readValue();
+        const temp = initial.getFloat32(0, true);
+        tempValue.textContent = temp.toFixed(1) + " °C";
+
+        statusEl.textContent = "Connected to " + device.name;
+        statusEl.classList.add("connected");
+        connectBtn.disabled = true;
+        ledOnBtn.disabled = false;
+        ledOffBtn.disabled = false;
+
+        device.addEventListener("gattserverdisconnected", onDisconnected);
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = "Error: " + error.message;
+      }
+    });
+
+    ledOnBtn.addEventListener("click", async () => {
+      await ledChar.writeValue(new Uint8Array([1]));
+      ledOnBtn.classList.add("led-on");
+      ledOffBtn.classList.remove("led-on");
+    });
+
+    ledOffBtn.addEventListener("click", async () => {
+      await ledChar.writeValue(new Uint8Array([0]));
+      ledOffBtn.classList.add("led-on");
+      ledOnBtn.classList.remove("led-on");
+    });
+
+    function onDisconnected() {
+      statusEl.textContent = "Disconnected";
+      statusEl.classList.remove("connected");
+      connectBtn.disabled = false;
+      ledOnBtn.disabled = true;
+      ledOffBtn.disabled = true;
+      tempValue.textContent = "--.- °C";
+    }
+  </script>
+</body>
+</html>
